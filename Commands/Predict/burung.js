@@ -1,5 +1,6 @@
 const { CommandInteraction, MessageEmbed } = require("discord.js");
 const axios = require("axios");
+const FormData = require('form-data');
 
 module.exports = {
   name: "burung",
@@ -23,7 +24,7 @@ module.exports = {
     // Reply to get the picture
     interaction.reply({
       content:
-        `Ready to predict! Please send a picture of your burung`,
+        `Ready to predict! Please send a picture of your burung (jpeg/jpg/png only!)`,
         ephemeral: true,
     });
 
@@ -31,118 +32,94 @@ module.exports = {
     const filter = m => m.author.equals(user);
     const collector = interaction.channel.createMessageCollector({ filter, max: 1, time: 60000 });
 
-    collector.on('end', collected => {
+    collector.on('end', async (collected) => {
         if (collected.size == 0) {
             return interaction.editReply({
                 content: undefined,
                 embeds: [
-                  Response.setDescription("😭 API Mismatch, Please contact dev!").setColor(
+                  Response.setDescription("😭 Hello... Are you still there?").setColor(
                     "RED"
                   ),
                 ],
               })
+        } else {
+            if (collected.first().attachments.size == 0) {
+                return interaction.editReply({
+                    content: undefined,
+                    embeds: [
+                        Response.setDescription("😤 No attachments detected!").setColor(
+                        "RED"
+                        ),
+                    ],
+                })
+            }
+            let targetAttachment = collected.first().attachments.first()
+            let file = targetAttachment.attachment
+            let fileType = targetAttachment.contentType
+
+            if (["image/jpeg", "image/jpg", "image/png"].includes(fileType)) {
+                const form = new FormData()
+                // Parse file into Form Data
+                form.append('file', file, targetAttachment.name)
+
+                // Send the file to the API
+                const response = await axios.post("https://prima-openapi.herokuapp.com/predict/bird", form, {
+                    headers: {
+                        ...form.getHeaders()
+                    },
+                });
+
+                if (response.status == 200) {
+                    console.log(response.data)
+                    // Check if any results are returned at all
+                    if (response.data.size == 0) {
+                        return interaction.editReply({
+                            embeds: [
+                              Response.setDescription("🥲 API Error... Please wait / contact dev...").setColor(
+                                "RED"
+                              ),
+                            ],
+                        })
+                    }
+                    // Check for undefined values
+                    let result = response.data[0]
+                    if (result.class == undefined || result.confidence == undefined) {
+                        console.log(result);
+                        return interaction.editReply({
+                            embeds: [
+                              Response.setDescription("🥲 API Error... Please wait / contact dev...").setColor(
+                                "RED"
+                              ),
+                            ],
+                        })
+                    }
+
+                    // Finally, return results
+                    collected.first().reply({
+                        content:
+                        `I believe this is a ${result.class} with a ${result.confidence}% confidence`
+                    })
+                } else {
+                    return interaction.editReply({
+                        embeds: [
+                          Response.setDescription("🥲 API Error... Please wait / contact dev...").setColor(
+                            "RED"
+                          ),
+                        ],
+                    })
+                }
+            } else {
+                console.log(fileType)
+                return interaction.editReply({
+                    content: undefined,
+                    embeds: [
+                        Response.setDescription("😤 Attachment must be jpeg/png!").setColor(
+                        "RED"
+                        ),
+                    ],
+                })
+            }
         }
     })
-
-    // Create the API request
-    const quizContent = await axios({
-      method: "get",
-      url: `https://opentdb.com/api.php?amount=1&category=${topic}&difficulty=${difficulty}&type=multiple`,
-    });
-
-    if (quizContent.status == 200 && quizContent.data.response_code == 0) {
-      const question = quizContent.data.results[0].question
-      const answers = quizContent.data.results[0].incorrect_answers
-      const correctAnswer = quizContent.data.results[0].correct_answer
-      // console.log(correctAnswer);
-      // Check validity of response
-      if (question == undefined || answers == undefined || correctAnswer == undefined) {
-        console.log(quizContent.data)
-        console.log(Object.keys(quizContent.data.results[0]))
-        return interaction.editReply({
-          content: undefined,
-          embeds: [
-            Response.setDescription("😭 API Mismatch, Please contact dev!").setColor(
-              "RED"
-            ),
-          ],
-        })
-      }
-
-      if (!(Array.isArray(answers))) {
-        console.log(quizContent.data)
-        console.log(quizContent.data.results[0])
-        return interaction.editReply({
-          content: undefined,
-          embeds: [
-            Response.setDescription("😭 API Mismatch, Please contact dev!").setColor(
-              "RED"
-            ),
-          ],
-        })
-      }
-
-      answers.push(correctAnswer)
-      // Scramble array
-      answers.sort(() => Math.random() - 0.5)
-      interaction.followUp({
-        content:
-          `Question: ${question} \n\nChoices: (${answers.join('/')}) \n\nPlease answer within 10 seconds! Multiple entries will not be recorded. Please write the answer exactly as the choices given.`
-      })
-
-      // Start collecting messages
-      const collector = interaction.channel.createMessageCollector({ time: 10000 });
-
-      
-      // collector.on('collect', m => {
-      //   console.log(`Collected ${m.content}`);
-      // });
-
-      // Find a unique and first correct answer
-      collector.on('end', collected => {
-        console.log(`Collected ${collected.size} items`);
-        const answered_users = new Set()
-        let filtered_ans = collected.filter((message) => {
-          return !(message.author.bot)
-        })
-        .filter((message) => {
-          if (answered_users.has(message.author)) {
-            return false
-          } else {
-            answered_users.add(message.author)
-            return true
-          }
-        })
-        .filter((message) => {
-          return message.content.toUpperCase() === correctAnswer.toUpperCase()
-        })
-
-        // Get winner if any
-        if (filtered_ans.size > 0) {
-          const winner = filtered_ans.first().author
-          interaction.channel.send({
-            content:
-            `Congratulations <@${winner.id}>! You won the quiz!!`
-          })
-        } else {
-          interaction.channel.send({
-            content:
-            `No one got it correct... The answer was ${correctAnswer}`
-          })
-        }
-
-        collector.stop("quiz ended");
-      });
-      return
-
-    } else {
-      return interaction.editReply({
-        embeds: [
-          Response.setDescription("🥲 API Error... Please wait / contact dev...").setColor(
-            "RED"
-          ),
-        ],
-      })
-    }
   },
 };
